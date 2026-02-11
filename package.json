@@ -1,7 +1,7 @@
 {
-  "name": "whatsapp-bot-api",
+  "name": "whatsapp-skrifna-bot",
   "version": "1.0.0",
-  "description": "Bot WhatsApp con Baileys + API Express",
+  "description": "Bot WhatsApp API Profesional",
   "main": "index.js",
   "type": "module",
   "scripts": {
