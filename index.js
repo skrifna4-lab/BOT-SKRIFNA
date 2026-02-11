@@ -12,9 +12,16 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 4531;
 
-// =========================
-// CONFIGURACIÓN CANAL
-// =========================
+/* =========================
+   RUTA PERSISTENTE
+   =========================
+   ESTA CARPETA DEBE SER LA DEL VOLUME MOUNT
+*/
+const AUTH_FOLDER = "/data/auth";
+
+/* =========================
+   CONFIGURACIÓN CANAL
+   ========================= */
 const CANAL_ID = "120363405239179634@newsletter";
 const CANAL_NOMBRE = "⚙️ SKRIFNA BOT ⚙️";
 
@@ -34,28 +41,18 @@ const fakeQuoted = {
   participant: "0@s.whatsapp.net"
 };
 
-// =========================
-// VARIABLES GLOBALES
-// =========================
 let sock;
 let qrCodeData = null;
 let isConnected = false;
 
-// =========================
-// EXTENDER SOCKET
-// =========================
+/* =========================
+   EXTENDER SOCKET
+   ========================= */
 const extenderConCanal = (sock) => {
   if (sock.__canalExtendido) return;
   sock.__canalExtendido = true;
 
   sock.sendMessage2 = async (jid, content, quoted = null, options = {}) => {
-
-    if (content.sticker) {
-      return sock.sendMessage(jid, { sticker: content.sticker }, {
-        quoted,
-        ...options
-      });
-    }
 
     const message = {
       ...content,
@@ -80,11 +77,12 @@ const extenderConCanal = (sock) => {
   };
 };
 
-// =========================
-// INICIAR BOT
-// =========================
+/* =========================
+   INICIAR BOT
+   ========================= */
 async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState("auth");
+
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
 
   const { version } = await fetchLatestBaileysVersion();
 
@@ -99,6 +97,7 @@ async function startBot() {
   sock.ev.on("creds.update", saveCreds);
 
   sock.ev.on("connection.update", async (update) => {
+
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
@@ -113,154 +112,71 @@ async function startBot() {
     }
 
     if (connection === "close") {
+
       isConnected = false;
+
       const shouldReconnect =
         lastDisconnect?.error?.output?.statusCode !==
         DisconnectReason.loggedOut;
 
-      if (shouldReconnect) {
-        startBot();
-      }
+      if (shouldReconnect) startBot();
     }
-  });
-
-  sock.ev.on("messages.upsert", async (m) => {
-    const msg = m.messages[0];
-    if (!msg.message) return;
-
-    console.log("Mensaje recibido");
   });
 }
 
 startBot();
 
-// =========================
-// RUTA PRINCIPAL
-// =========================
+/* =========================
+   PANEL QR
+   ========================= */
 app.get("/", (req, res) => {
 
   if (isConnected) {
-    return res.send(`
-      <html>
-        <body style="font-family:Arial;text-align:center;margin-top:50px;">
-          <h2 style="color:green;">✅ BOT CONECTADO</h2>
-        </body>
-      </html>
-    `);
+    return res.send("<h2>✅ BOT CONECTADO</h2>");
   }
 
   if (qrCodeData) {
     return res.send(`
-      <html>
-        <head>
-          <meta http-equiv="refresh" content="5">
-        </head>
-        <body style="text-align:center;margin-top:50px;">
-          <h2>Escanea el QR</h2>
-          <img src="${qrCodeData}" />
-        </body>
-      </html>
+      <meta http-equiv="refresh" content="5">
+      <h2>Escanea el QR</h2>
+      <img src="${qrCodeData}" />
     `);
   }
 
   res.send("Inicializando...");
 });
 
-// =========================
-// ENDPOINT ENVÍO
-// =========================
+/* =========================
+   ENVÍO MENSAJES
+   ========================= */
 app.post("/send", async (req, res) => {
 
   try {
+
     const { number, type, message, mediaUrl } = req.body;
 
-    if (!number || !type) {
-      return res.status(400).json({
-        error: "number y type son obligatorios"
-      });
-    }
-
-    if (!isConnected) {
-      return res.status(500).json({
-        error: "Bot no conectado"
-      });
-    }
+    if (!isConnected)
+      return res.status(500).json({ error: "Bot no conectado" });
 
     const jid = number + "@s.whatsapp.net";
+
     let content = {};
 
-    switch (type) {
+    if (type === "text")
+      content = { text: message };
 
-      case "text":
-        if (!message)
-          return res.status(400).json({ error: "Falta message" });
-
-        content = { text: message };
-        break;
-
-      case "image":
-        if (!mediaUrl)
-          return res.status(400).json({ error: "Falta mediaUrl" });
-
-        content = {
-          image: { url: mediaUrl },
-          caption: message || ""
-        };
-        break;
-
-      case "audio":
-        if (!mediaUrl)
-          return res.status(400).json({ error: "Falta mediaUrl" });
-
-        content = {
-          audio: { url: mediaUrl },
-          mimetype: "audio/mp4",
-          ptt: true
-        };
-        break;
-
-      case "video":
-        if (!mediaUrl)
-          return res.status(400).json({ error: "Falta mediaUrl" });
-
-        content = {
-          video: { url: mediaUrl },
-          caption: message || ""
-        };
-        break;
-
-      case "document":
-        if (!mediaUrl)
-          return res.status(400).json({ error: "Falta mediaUrl" });
-
-        content = {
-          document: { url: mediaUrl },
-          fileName: message || "archivo.pdf",
-          mimetype: "application/pdf"
-        };
-        break;
-
-      default:
-        return res.status(400).json({
-          error: "Tipo no soportado"
-        });
-    }
+    if (type === "image")
+      content = { image: { url: mediaUrl }, caption: message || "" };
 
     await sock.sendMessage2(jid, content, fakeQuoted);
 
-    res.json({
-      success: true,
-      message: "Mensaje enviado correctamente"
-    });
+    res.json({ success: true });
 
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      error: "Error enviando mensaje"
-    });
+  } catch (e) {
+    res.status(500).json({ error: "Error enviando" });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+  console.log("Servidor iniciado en " + PORT);
 });
