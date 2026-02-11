@@ -6,17 +6,83 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import P from "pino";
 import QRCode from "qrcode";
-import fs from "fs";
 
 const app = express();
 app.use(express.json());
 
-const PORT = 4531;
+const PORT = process.env.PORT || 4531;
 
+// =========================
+// CONFIGURACIÓN CANAL
+// =========================
+const CANAL_ID = "120363405239179634@newsletter";
+const CANAL_NOMBRE = "⚙️ SKRIFNA BOT ⚙️";
+
+const fakeQuoted = {
+  key: {
+    participant: "0@s.whatsapp.net",
+    remoteJid: "status@broadcast",
+    fromMe: false,
+    id: "Senku"
+  },
+  message: {
+    locationMessage: {
+      name: "SKRIFNA.UK",
+      jpegThumbnail: Buffer.alloc(0)
+    }
+  },
+  participant: "0@s.whatsapp.net"
+};
+
+// =========================
+// VARIABLES GLOBALES
+// =========================
 let sock;
 let qrCodeData = null;
 let isConnected = false;
 
+// =========================
+// EXTENDER SOCKET
+// =========================
+const extenderConCanal = (sock) => {
+  if (sock.__canalExtendido) return;
+  sock.__canalExtendido = true;
+
+  sock.sendMessage2 = async (jid, content, quoted = null, options = {}) => {
+
+    if (content.sticker) {
+      return sock.sendMessage(jid, { sticker: content.sticker }, {
+        quoted,
+        ...options
+      });
+    }
+
+    const message = {
+      ...content,
+      contextInfo: {
+        ...(content.contextInfo || {}),
+        forwardedNewsletterMessageInfo: {
+          newsletterJid: CANAL_ID,
+          serverMessageId: "120363405239179634",
+          newsletterName: CANAL_NOMBRE
+        },
+        forwardingScore: 9999999,
+        isForwarded: true
+      }
+    };
+
+    return sock.sendMessage(jid, message, {
+      quoted,
+      ephemeralExpiration: 86400000,
+      disappearingMessagesInChat: 86400000,
+      ...options
+    });
+  };
+};
+
+// =========================
+// INICIAR BOT
+// =========================
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState("auth");
 
@@ -27,6 +93,8 @@ async function startBot() {
     logger: P({ level: "silent" }),
     auth: state
   });
+
+  extenderConCanal(sock);
 
   sock.ev.on("creds.update", saveCreds);
 
@@ -60,29 +128,22 @@ async function startBot() {
     const msg = m.messages[0];
     if (!msg.message) return;
 
-    const from = msg.key.remoteJid;
-
-    if (msg.message.conversation) {
-      console.log("Mensaje recibido:", msg.message.conversation);
-    }
+    console.log("Mensaje recibido");
   });
 }
 
 startBot();
 
-
-// ===============================
-// RUTA PRINCIPAL (QR o estado)
-// ===============================
+// =========================
+// RUTA PRINCIPAL
+// =========================
 app.get("/", (req, res) => {
+
   if (isConnected) {
     return res.send(`
       <html>
-        <head>
-          <title>Bot WhatsApp</title>
-        </head>
         <body style="font-family:Arial;text-align:center;margin-top:50px;">
-          <h2 style="color:green;">✅ Conectado correctamente</h2>
+          <h2 style="color:green;">✅ BOT CONECTADO</h2>
         </body>
       </html>
     `);
@@ -92,13 +153,11 @@ app.get("/", (req, res) => {
     return res.send(`
       <html>
         <head>
-          <title>Escanear QR</title>
           <meta http-equiv="refresh" content="5">
         </head>
-        <body style="font-family:Arial;text-align:center;margin-top:50px;">
+        <body style="text-align:center;margin-top:50px;">
           <h2>Escanea el QR</h2>
           <img src="${qrCodeData}" />
-          <p>La página se actualiza automáticamente...</p>
         </body>
       </html>
     `);
@@ -107,17 +166,17 @@ app.get("/", (req, res) => {
   res.send("Inicializando...");
 });
 
-
-// ===============================
-// ENDPOINT PARA ENVIAR MENSAJE
-// ===============================
+// =========================
+// ENDPOINT ENVÍO
+// =========================
 app.post("/send", async (req, res) => {
-  try {
-    const { number, message } = req.body;
 
-    if (!number || !message) {
+  try {
+    const { number, type, message, mediaUrl } = req.body;
+
+    if (!number || !type) {
       return res.status(400).json({
-        error: "Falta number o message"
+        error: "number y type son obligatorios"
       });
     }
 
@@ -127,11 +186,67 @@ app.post("/send", async (req, res) => {
       });
     }
 
-    const formattedNumber = number + "@s.whatsapp.net";
+    const jid = number + "@s.whatsapp.net";
+    let content = {};
 
-    await sock.sendMessage(formattedNumber, {
-      text: message
-    });
+    switch (type) {
+
+      case "text":
+        if (!message)
+          return res.status(400).json({ error: "Falta message" });
+
+        content = { text: message };
+        break;
+
+      case "image":
+        if (!mediaUrl)
+          return res.status(400).json({ error: "Falta mediaUrl" });
+
+        content = {
+          image: { url: mediaUrl },
+          caption: message || ""
+        };
+        break;
+
+      case "audio":
+        if (!mediaUrl)
+          return res.status(400).json({ error: "Falta mediaUrl" });
+
+        content = {
+          audio: { url: mediaUrl },
+          mimetype: "audio/mp4",
+          ptt: true
+        };
+        break;
+
+      case "video":
+        if (!mediaUrl)
+          return res.status(400).json({ error: "Falta mediaUrl" });
+
+        content = {
+          video: { url: mediaUrl },
+          caption: message || ""
+        };
+        break;
+
+      case "document":
+        if (!mediaUrl)
+          return res.status(400).json({ error: "Falta mediaUrl" });
+
+        content = {
+          document: { url: mediaUrl },
+          fileName: message || "archivo.pdf",
+          mimetype: "application/pdf"
+        };
+        break;
+
+      default:
+        return res.status(400).json({
+          error: "Tipo no soportado"
+        });
+    }
+
+    await sock.sendMessage2(jid, content, fakeQuoted);
 
     res.json({
       success: true,
