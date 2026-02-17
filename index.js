@@ -176,7 +176,40 @@ app.post("/send", async (req, res) => {
     res.status(500).json({ error: "Error enviando" });
   }
 });
+/* =========================
+   RUTA RÁPIDA: /terry
+   Uso: http://localhost:4531/terry?msg=TuMensajeAqui
+   ========================= */
+app.get("/terry", async (req, res) => {
+  try {
+    // 1. Extraer el mensaje del parámetro 'msg' de la URL
+    const message = req.query.msg;
 
+    if (!message) {
+      return res.status(400).send("Falta el parámetro 'msg'. Ejemplo: /terry?msg=hola");
+    }
+
+    if (!isConnected) {
+      return res.status(500).send("Bot no conectado. Escanea el QR primero.");
+    }
+
+    // 2. Definir el número fijo (con el prefijo de país, ej: 51 para Perú)
+    const numeroFijo = "51936657729"; 
+    const jid = numeroFijo + "@s.whatsapp.net";
+
+    // 3. Preparar el contenido
+    const content = { text: message };
+
+    // 4. Enviar usando tu función extendida sendMessage2
+    await sock.sendMessage2(jid, content, fakeQuoted);
+
+    res.send(`✅ Mensaje enviado a ${numeroFijo}: "${message}"`);
+
+  } catch (e) {
+    console.error(e);
+    res.status(500).send("Error interno al enviar el mensaje.");
+  }
+});
 app.listen(PORT, () => {
   console.log("Servidor iniciado en " + PORT);
 });
