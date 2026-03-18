@@ -13,7 +13,7 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 4540;
-const AUTH_FOLDER = "./auth_data"; // Cambia a /data/auth si usas Docker con volumen
+const AUTH_FOLDER = "./auth_datat"; // Cambia a /data/auth si usas Docker con volumen
 
 /* =========================
    CONFIGURACIÓN CANAL
