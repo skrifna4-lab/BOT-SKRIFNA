@@ -8,7 +8,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "*",
+    "github:whiskeysockets/Baileys": "*",
     "express": "^4.18.2",
     "pino": "^8.14.1",
     "qrcode": "^1.5.3",
