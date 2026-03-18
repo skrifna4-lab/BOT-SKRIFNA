@@ -1,11 +1,14 @@
 import express from "express";
-import makeWASocket, {
-  useMultiFileAuthState,
-  DisconnectReason,
-  fetchLatestBaileysVersion
+import pkg, { 
+  useMultiFileAuthState, 
+  DisconnectReason, 
+  fetchLatestBaileysVersion 
 } from "@whiskeysockets/baileys";
 import P from "pino";
 import QRCode from "qrcode";
+
+// Extraemos makeWASocket de forma segura para evitar el TypeError
+const { default: makeWASocket } = pkg;
 
 const app = express();
 app.use(express.json());
@@ -14,9 +17,7 @@ const PORT = process.env.PORT || 4540;
 
 /* =========================
    RUTA PERSISTENTE
-   =========================
-   ESTA CARPETA DEBE SER LA DEL VOLUME MOUNT
-*/
+   ========================= */
 const AUTH_FOLDER = "/data/auth";
 
 /* =========================
@@ -48,12 +49,11 @@ let isConnected = false;
 /* =========================
    EXTENDER SOCKET
    ========================= */
-const extenderConCanal = (sock) => {
-  if (sock.__canalExtendido) return;
-  sock.__canalExtendido = true;
+const extenderConCanal = (socket) => {
+  if (socket.__canalExtendido) return;
+  socket.__canalExtendido = true;
 
-  sock.sendMessage2 = async (jid, content, quoted = null, options = {}) => {
-
+  socket.sendMessage2 = async (jid, content, quoted = null, options = {}) => {
     const message = {
       ...content,
       contextInfo: {
@@ -68,7 +68,7 @@ const extenderConCanal = (sock) => {
       }
     };
 
-    return sock.sendMessage(jid, message, {
+    return socket.sendMessage(jid, message, {
       quoted,
       ephemeralExpiration: 86400000,
       disappearingMessagesInChat: 86400000,
@@ -81,15 +81,14 @@ const extenderConCanal = (sock) => {
    INICIAR BOT
    ========================= */
 async function startBot() {
-
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
-
   const { version } = await fetchLatestBaileysVersion();
 
   sock = makeWASocket({
     version,
     logger: P({ level: "silent" }),
-    auth: state
+    auth: state,
+    printQRInTerminal: true // Opcional, ayuda a debuggear
   });
 
   extenderConCanal(sock);
@@ -97,7 +96,6 @@ async function startBot() {
   sock.ev.on("creds.update", saveCreds);
 
   sock.ev.on("connection.update", async (update) => {
-
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
@@ -112,13 +110,9 @@ async function startBot() {
     }
 
     if (connection === "close") {
-
       isConnected = false;
-
-      const shouldReconnect =
-        lastDisconnect?.error?.output?.statusCode !==
-        DisconnectReason.loggedOut;
-
+      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log("Conexión cerrada. ¿Reintentando?:", shouldReconnect);
       if (shouldReconnect) startBot();
     }
   });
@@ -130,59 +124,55 @@ startBot();
    PANEL QR
    ========================= */
 app.get("/", (req, res) => {
-
   if (isConnected) {
     return res.send("<h2>✅ BOT CONECTADO</h2>");
   }
 
   if (qrCodeData) {
     return res.send(`
-      <meta http-equiv="refresh" content="5">
-      <h2>Escanea el QR</h2>
-      <img src="${qrCodeData}" />
+      <html>
+        <body style="text-align: center; font-family: sans-serif;">
+          <meta http-equiv="refresh" content="5">
+          <h2>Escanea el QR</h2>
+          <img src="${qrCodeData}" />
+          <p>La página se recarga cada 5 segundos.</p>
+        </body>
+      </html>
     `);
   }
 
-  res.send("Inicializando...");
+  res.send("Inicializando... Por favor espera unos segundos y refresca.");
 });
 
 /* =========================
    ENVÍO MENSAJES
    ========================= */
 app.post("/send", async (req, res) => {
-
   try {
-
     const { number, type, message, mediaUrl } = req.body;
 
     if (!isConnected)
       return res.status(500).json({ error: "Bot no conectado" });
 
     const jid = number + "@s.whatsapp.net";
-
     let content = {};
 
-    if (type === "text")
-      content = { text: message };
-
-    if (type === "image")
-      content = { image: { url: mediaUrl }, caption: message || "" };
+    if (type === "text") content = { text: message };
+    if (type === "image") content = { image: { url: mediaUrl }, caption: message || "" };
 
     await sock.sendMessage2(jid, content, fakeQuoted);
-
     res.json({ success: true });
-
   } catch (e) {
+    console.error(e);
     res.status(500).json({ error: "Error enviando" });
   }
 });
+
 /* =========================
    RUTA RÁPIDA: /terry
-   Uso: http://localhost:4531/terry?msg=TuMensajeAqui
    ========================= */
 app.get("/terry", async (req, res) => {
   try {
-    // 1. Extraer el mensaje del parámetro 'msg' de la URL
     const message = req.query.msg;
 
     if (!message) {
@@ -193,23 +183,18 @@ app.get("/terry", async (req, res) => {
       return res.status(500).send("Bot no conectado. Escanea el QR primero.");
     }
 
-    // 2. Definir el número fijo (con el prefijo de país, ej: 51 para Perú)
     const numeroFijo = "51936657729"; 
     const jid = numeroFijo + "@s.whatsapp.net";
-
-    // 3. Preparar el contenido
     const content = { text: message };
 
-    // 4. Enviar usando tu función extendida sendMessage2
     await sock.sendMessage2(jid, content, fakeQuoted);
-
     res.send(`✅ Mensaje enviado a ${numeroFijo}: "${message}"`);
-
   } catch (e) {
     console.error(e);
     res.status(500).send("Error interno al enviar el mensaje.");
   }
 });
+
 app.listen(PORT, () => {
-  console.log("Servidor iniciado en " + PORT);
+  console.log("Servidor iniciado en puerto " + PORT);
 });
