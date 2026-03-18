@@ -10,7 +10,7 @@ import QRCode from "qrcode";
 const app = express();
 app.use(express.json());
 
-const PORT = process.env.PORT || 4531;
+const PORT = process.env.PORT || 4540;
 
 /* =========================
    RUTA PERSISTENTE
