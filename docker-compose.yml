@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  whatsapp-bot:
+    build: .
+    container_name: skrifna-bot
+    restart: always
+    ports:
+      - "4540:4540"
+    volumes:
+      # Esto guarda tu sesión en la carpeta 'auth_data' del VPS
+      - ./auth_data:/app/auth_data
+    environment:
+      - PORT=4540
+      - NODE_ENV=production
