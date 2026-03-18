@@ -7,18 +7,13 @@ import pkg, {
 import P from "pino";
 import QRCode from "qrcode";
 
-// Extraemos makeWASocket de forma segura para evitar el TypeError
 const { default: makeWASocket } = pkg;
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 4540;
-
-/* =========================
-   RUTA PERSISTENTE
-   ========================= */
-const AUTH_FOLDER = "/data/auth";
+const AUTH_FOLDER = "./auth_data"; // Cambia a /data/auth si usas Docker con volumen
 
 /* =========================
    CONFIGURACIÓN CANAL
@@ -27,18 +22,8 @@ const CANAL_ID = "120363405239179634@newsletter";
 const CANAL_NOMBRE = "⚙️ SKRIFNA BOT ⚙️";
 
 const fakeQuoted = {
-  key: {
-    participant: "0@s.whatsapp.net",
-    remoteJid: "status@broadcast",
-    fromMe: false,
-    id: "Senku"
-  },
-  message: {
-    locationMessage: {
-      name: "SKRIFNA.UK",
-      jpegThumbnail: Buffer.alloc(0)
-    }
-  },
+  key: { participant: "0@s.whatsapp.net", remoteJid: "status@broadcast", fromMe: false, id: "Senku" },
+  message: { locationMessage: { name: "SKRIFNA.UK", jpegThumbnail: Buffer.alloc(0) } },
   participant: "0@s.whatsapp.net"
 };
 
@@ -67,13 +52,7 @@ const extenderConCanal = (socket) => {
         isForwarded: true
       }
     };
-
-    return socket.sendMessage(jid, message, {
-      quoted,
-      ephemeralExpiration: 86400000,
-      disappearingMessagesInChat: 86400000,
-      ...options
-    });
+    return socket.sendMessage(jid, message, { quoted, ...options });
   };
 };
 
@@ -81,6 +60,8 @@ const extenderConCanal = (socket) => {
    INICIAR BOT
    ========================= */
 async function startBot() {
+  console.log("Iniciando conexión con WhatsApp...");
+  
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
   const { version } = await fetchLatestBaileysVersion();
 
@@ -88,7 +69,7 @@ async function startBot() {
     version,
     logger: P({ level: "silent" }),
     auth: state,
-    printQRInTerminal: true // Opcional, ayuda a debuggear
+    printQRInTerminal: true
   });
 
   extenderConCanal(sock);
@@ -100,20 +81,28 @@ async function startBot() {
 
     if (qr) {
       qrCodeData = await QRCode.toDataURL(qr);
-      isConnected = false;
+      console.log("Nuevo QR generado, escanea en el navegador.");
     }
 
     if (connection === "open") {
-      console.log("✅ Conectado correctamente");
+      console.log("✅ BOT CONECTADO");
       isConnected = true;
       qrCodeData = null;
     }
 
     if (connection === "close") {
       isConnected = false;
-      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log("Conexión cerrada. ¿Reintentando?:", shouldReconnect);
-      if (shouldReconnect) startBot();
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      
+      console.log(`Conexión cerrada. Razón: ${statusCode}. Reintentando: ${shouldReconnect}`);
+
+      if (shouldReconnect) {
+        // Esperamos 5 segundos antes de reintentar para evitar bucles infinitos
+        setTimeout(() => startBot(), 5000);
+      } else {
+        console.log("❌ Sesión cerrada permanentemente. Borra la carpeta de auth y escanea de nuevo.");
+      }
     }
   });
 }
@@ -121,80 +110,25 @@ async function startBot() {
 startBot();
 
 /* =========================
-   PANEL QR
+   RUTAS EXPRESS
    ========================= */
 app.get("/", (req, res) => {
-  if (isConnected) {
-    return res.send("<h2>✅ BOT CONECTADO</h2>");
-  }
-
-  if (qrCodeData) {
-    return res.send(`
-      <html>
-        <body style="text-align: center; font-family: sans-serif;">
-          <meta http-equiv="refresh" content="5">
-          <h2>Escanea el QR</h2>
-          <img src="${qrCodeData}" />
-          <p>La página se recarga cada 5 segundos.</p>
-        </body>
-      </html>
-    `);
-  }
-
-  res.send("Inicializando... Por favor espera unos segundos y refresca.");
+  if (isConnected) return res.send("<h2>✅ BOT CONECTADO</h2>");
+  if (qrCodeData) return res.send(`<h2>Escanea el QR</h2><img src="${qrCodeData}" /><script>setTimeout(()=>location.reload(), 5000)</script>`);
+  res.send("Cargando QR... Refresca en 5 segundos.");
 });
 
-/* =========================
-   ENVÍO MENSAJES
-   ========================= */
-app.post("/send", async (req, res) => {
-  try {
-    const { number, type, message, mediaUrl } = req.body;
-
-    if (!isConnected)
-      return res.status(500).json({ error: "Bot no conectado" });
-
-    const jid = number + "@s.whatsapp.net";
-    let content = {};
-
-    if (type === "text") content = { text: message };
-    if (type === "image") content = { image: { url: mediaUrl }, caption: message || "" };
-
-    await sock.sendMessage2(jid, content, fakeQuoted);
-    res.json({ success: true });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Error enviando" });
-  }
-});
-
-/* =========================
-   RUTA RÁPIDA: /terry
-   ========================= */
 app.get("/terry", async (req, res) => {
   try {
     const message = req.query.msg;
-
-    if (!message) {
-      return res.status(400).send("Falta el parámetro 'msg'. Ejemplo: /terry?msg=hola");
-    }
-
-    if (!isConnected) {
-      return res.status(500).send("Bot no conectado. Escanea el QR primero.");
-    }
-
-    const numeroFijo = "51936657729"; 
-    const jid = numeroFijo + "@s.whatsapp.net";
-    const content = { text: message };
-
-    await sock.sendMessage2(jid, content, fakeQuoted);
-    res.send(`✅ Mensaje enviado a ${numeroFijo}: "${message}"`);
+    if (!message || !isConnected) return res.status(400).send("Error: Mensaje vacío o Bot desconectado.");
+    
+    const jid = "51936657729@s.whatsapp.net";
+    await sock.sendMessage2(jid, { text: message }, fakeQuoted);
+    res.send(`✅ Enviado: ${message}`);
   } catch (e) {
-    console.error(e);
-    res.status(500).send("Error interno al enviar el mensaje.");
+    res.status(500).send("Error al enviar.");
   }
 });
 
-app.listen(PORT, () => {
-  console.log("Servidor iniciado en puerto " + PORT);
-});
+app.listen(PORT, () => console.log("Servidor en puerto " + PORT));
