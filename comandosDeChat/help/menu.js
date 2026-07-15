@@ -5,7 +5,7 @@
 // un solo uso forzado por memoria, no hay expiración programada: el
 // botón simplemente existe mientras el mensaje exista en el chat.
 
-const { ui, responder } = require("../../funciones");
+const { ui, responder } = require("#funsiones");
 
 const OPCIONES = {
     info: {
