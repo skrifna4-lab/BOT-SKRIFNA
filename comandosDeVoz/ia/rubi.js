@@ -11,7 +11,7 @@
 //   -> respuesta: nota de voz generada por la IA
 // ====================================================================
 
-const { ejecutarPeticionInterna } = require('../utils/iaVoz');
+const { ejecutarPeticionInterna } = require('#utils/iaVoz');
 
 module.exports = {
     keyword: "hola",
